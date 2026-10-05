@@ -1,0 +1,9 @@
+node_modules/
+.env
+uploads/*
+uploads/**/*
+!uploads/.gitkeep
+!uploads/houses/.gitkeep
+!uploads/tenants/.gitkeep
+!uploads/families/.gitkeep
+*.log
