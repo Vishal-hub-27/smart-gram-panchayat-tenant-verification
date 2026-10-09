@@ -33,7 +33,41 @@ const tenantSchema = new mongoose.Schema(
 
     // ---- Personal details (spec §7) ----
     name: { type: String, required: [true, 'Tenant name is required'], trim: true },
-    phone: { type: String, required: [true, 'Tenant phone number is required'], trim: true },
+    name: { type: String, required: [true, 'Tenant name is required'], trim: true },
+
+phone: {
+  type: String,
+  required: [true, 'Tenant phone number is required'],
+  trim: true,
+},
+
+isPhoneVerified: {
+  type: Boolean,
+  default: false,
+},
+
+phoneOtpHash: {
+  type: String,
+  select: false,
+},
+
+phoneOtpExpiresAt: {
+  type: Date,
+  select: false,
+},
+
+phoneOtpAttempts: {
+  type: Number,
+  default: 0,
+  select: false,
+},
+
+lastPhoneOtpSentAt: {
+  type: Date,
+  select: false,
+},
+
+alternatePhone: { type: String, trim: true },
     alternatePhone: { type: String, trim: true },
     dateOfBirth: { type: Date },
     gender: { type: String, enum: ['male', 'female', 'other', ''], default: '' },

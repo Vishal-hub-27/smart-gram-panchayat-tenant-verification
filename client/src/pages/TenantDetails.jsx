@@ -27,6 +27,60 @@ export default function TenantDetails() {
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false);
   const [showResubmit, setShowResubmit] = useState(false);
+  const [sendingOtp, setSendingOtp] = useState(false);
+  const [verifyingOtp, setVerifyingOtp] = useState(false);
+  const [otpSent, setOtpSent] = useState(false);
+  const [otp, setOtp] = useState('');
+  const [phoneError, setPhoneError] = useState('');
+  const [phoneSuccess, setPhoneSuccess] = useState('');
+  const handleSendPhoneOtp = async () => {
+  setSendingOtp(true);
+  setPhoneError('');
+  setPhoneSuccess('');
+
+  try {
+    await tenantService.sendPhoneOtp(tenant._id);
+
+    setOtpSent(true);
+    setPhoneSuccess('OTP sent successfully. Check the server terminal in mock OTP mode.');
+  } catch (err) {
+    setPhoneError(
+      err.response?.data?.message || 'Could not send OTP.'
+    );
+  } finally {
+    setSendingOtp(false);
+  }
+};
+
+const handleVerifyPhoneOtp = async () => {
+  if (!/^\d{6}$/.test(otp)) {
+    setPhoneError('Please enter the 6-digit OTP.');
+    return;
+  }
+
+  setVerifyingOtp(true);
+  setPhoneError('');
+  setPhoneSuccess('');
+
+  try {
+    await tenantService.verifyPhoneOtp(tenant._id, otp);
+
+    setTenant((current) => ({
+      ...current,
+      isPhoneVerified: true,
+    }));
+
+    setOtp('');
+    setOtpSent(false);
+    setPhoneSuccess('Phone number verified successfully.');
+  } catch (err) {
+    setPhoneError(
+      err.response?.data?.message || 'Invalid OTP.'
+    );
+  } finally {
+    setVerifyingOtp(false);
+  }
+};
 
   const load = () => {
     tenantService
@@ -127,6 +181,96 @@ export default function TenantDetails() {
 
       <div className="info-card">
         <div className="info-row"><span className="label">Phone</span><span>{tenant.phone}</span></div>
+        <div
+  className="info-card"
+  style={{
+    marginTop: 16,
+    border: tenant.isPhoneVerified
+      ? '1px solid #22c55e'
+      : '1px solid #f59e0b',
+  }}
+>
+  <div className="info-row">
+    <span className="label">Phone Verification</span>
+
+    {tenant.isPhoneVerified ? (
+      <span style={{ color: '#16a34a', fontWeight: 600 }}>
+        ✓ Verified
+      </span>
+    ) : (
+      <span style={{ color: '#d97706', fontWeight: 600 }}>
+        Not Verified
+      </span>
+    )}
+  </div>
+
+  {!isAdmin && !tenant.isPhoneVerified && (
+    <div style={{ marginTop: 16 }}>
+      {!otpSent ? (
+        <button
+          className="btn-primary-sm"
+          onClick={handleSendPhoneOtp}
+          disabled={sendingOtp}
+        >
+          {sendingOtp ? 'Sending OTP...' : 'Verify Phone Number'}
+        </button>
+      ) : (
+        <div>
+          <p style={{ fontSize: 13, marginBottom: 10 }}>
+            Enter the 6-digit OTP sent to <strong>{tenant.phone}</strong>
+          </p>
+
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={6}
+              value={otp}
+              onChange={(e) =>
+                setOtp(e.target.value.replace(/\D/g, ''))
+              }
+              placeholder="Enter OTP"
+              style={{
+                width: 150,
+                padding: '9px 10px',
+                border: '1px solid #ccc',
+                borderRadius: 6,
+              }}
+            />
+
+            <button
+              className="btn-primary-sm"
+              onClick={handleVerifyPhoneOtp}
+              disabled={verifyingOtp || otp.length !== 6}
+            >
+              {verifyingOtp ? 'Verifying...' : 'Verify OTP'}
+            </button>
+
+            <button
+              className="btn-secondary"
+              onClick={handleSendPhoneOtp}
+              disabled={sendingOtp}
+            >
+              {sendingOtp ? 'Sending...' : 'Resend OTP'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {phoneSuccess && (
+        <div className="alert alert-success" style={{ marginTop: 12 }}>
+          {phoneSuccess}
+        </div>
+      )}
+
+      {phoneError && (
+        <div className="alert alert-error" style={{ marginTop: 12 }}>
+          {phoneError}
+        </div>
+      )}
+    </div>
+  )}
+</div>~
         {tenant.alternatePhone && (
           <div className="info-row"><span className="label">Alternate phone</span><span>{tenant.alternatePhone}</span></div>
         )}

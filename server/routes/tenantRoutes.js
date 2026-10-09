@@ -7,8 +7,9 @@ const residenceRequestController = require('../controllers/residenceRequestContr
 const { protect } = require('../middleware/authMiddleware');
 const { authorize } = require('../middleware/roleMiddleware');
 const { validate } = require('../middleware/validationMiddleware');
-const { isValidPhone, isNonEmptyString } = require('../utils/validators');
+const { isValidPhone, isValidOtp, isNonEmptyString } = require('../utils/validators');
 const { makeUploader, handleFieldsUpload, ALLOWED_DOCUMENT_TYPES } = require('../middleware/uploadMiddleware');
+
 
 const tenantUploader = makeUploader('tenants', ALLOWED_DOCUMENT_TYPES);
 
@@ -33,6 +34,23 @@ router.post(
 );
 
 router.get('/', authorize('owner', 'admin'), tenantController.getTenants);
+router.post(
+  '/:id/phone/send-otp',
+  authorize('owner', 'admin'),
+  tenantController.sendTenantPhoneOtp
+);
+
+router.post(
+  '/:id/phone/verify-otp',
+  authorize('owner', 'admin'),
+  validate({
+    otp: {
+      check: isValidOtp,
+      message: 'Please enter the 6-digit OTP.',
+    },
+  }),
+  tenantController.verifyTenantPhoneOtp
+);
 
 router.get('/:id', authorize('owner', 'admin'), tenantController.getTenantById);
 

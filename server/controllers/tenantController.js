@@ -2,6 +2,9 @@ const Tenant = require('../models/Tenant');
 const House = require('../models/House');
 const Room = require('../models/Room');
 
+
+
+
 const { success, error } = require('../utils/response');
 const { requireOwnerProfile } = require('./houseController');
 const { requireOwnedHouseAndRoom } = require('./residenceHelpers');
@@ -13,6 +16,12 @@ const { normalizePhone } = require('../utils/validators');
 const { upsertVerification } = require('../services/verificationQueueService');
 const notify = require('../services/notificationService');
 const audit = require('../services/auditService');
+const { config } = require('../config/env');
+const otpService = require('../services/otpService');
+
+
+const OTP_RESEND_COOLDOWN_SECONDS = 30;
+const MAX_OTP_ATTEMPTS = 5;
 
 /**
  * duplicateCheck lives in controllers/duplicateController.js — shared
@@ -280,4 +289,178 @@ async function resubmitTenant(req, res, next) {
   }
 }
 
-module.exports = { createTenant, getTenants, getTenantById, resubmitTenant };
+// ---------------------------------------------------------------------
+// POST /api/tenants/:id/phone/send-otp
+// Sends an OTP to the tenant's registered phone number.
+// ---------------------------------------------------------------------
+async function sendTenantPhoneOtp(req, res, next) {
+  try {
+    const tenant = await Tenant.findById(req.params.id).select(
+      '+lastPhoneOtpSentAt +phoneOtpHash +phoneOtpExpiresAt +phoneOtpAttempts'
+    );
+
+    if (!tenant) {
+      return error(res, 404, 'Tenant record not found.');
+    }
+
+    // Owner can only access their own tenant.
+    if (req.user.role === 'owner') {
+      const owner = await requireOwnerProfile(req);
+
+      if (tenant.ownerId.toString() !== owner._id.toString()) {
+        return error(res, 404, 'Tenant record not found.');
+      }
+    }
+
+    if (tenant.isPhoneVerified) {
+      return error(res, 400, 'This tenant phone number is already verified.');
+    }
+
+    // Prevent OTP spam.
+    if (tenant.lastPhoneOtpSentAt) {
+      const secondsSinceLast =
+        (Date.now() - tenant.lastPhoneOtpSentAt.getTime()) / 1000;
+
+      if (secondsSinceLast < OTP_RESEND_COOLDOWN_SECONDS) {
+        const wait = Math.ceil(
+          OTP_RESEND_COOLDOWN_SECONDS - secondsSinceLast
+        );
+
+        return error(
+          res,
+          429,
+          `Please wait ${wait} seconds before requesting another OTP.`
+        );
+      }
+    }
+
+    const otp = otpService.generateOtp();
+    const otpHash = await otpService.hashOtp(otp);
+
+    tenant.phoneOtpHash = otpHash;
+    tenant.phoneOtpExpiresAt = new Date(
+      Date.now() + config.otpExpiryMinutes * 60 * 1000
+    );
+    tenant.phoneOtpAttempts = 0;
+    tenant.lastPhoneOtpSentAt = new Date();
+
+    await tenant.save();
+
+    await otpService.sendOtp(tenant.phone, otp);
+
+    const responsePayload = {
+      tenantId: tenant._id,
+    };
+
+    // Development only.
+    // Your existing OTP system already uses this pattern.
+    if (!config.isProduction) {
+      responsePayload.devOtp = otp;
+    }
+
+    return success(
+      res,
+      200,
+      'OTP sent successfully to the tenant phone number.',
+      responsePayload
+    );
+  } catch (err) {
+    next(err);
+  }
+}
+
+
+// ---------------------------------------------------------------------
+// POST /api/tenants/:id/phone/verify-otp
+// Verifies the OTP entered for the tenant phone number.
+// ---------------------------------------------------------------------
+async function verifyTenantPhoneOtp(req, res, next) {
+  try {
+    const { otp } = req.body;
+
+    const tenant = await Tenant.findById(req.params.id).select(
+      '+phoneOtpHash +phoneOtpExpiresAt +phoneOtpAttempts'
+    );
+
+    if (!tenant) {
+      return error(res, 404, 'Tenant record not found.');
+    }
+
+    // Owner can only verify their own tenant.
+    if (req.user.role === 'owner') {
+      const owner = await requireOwnerProfile(req);
+
+      if (tenant.ownerId.toString() !== owner._id.toString()) {
+        return error(res, 404, 'Tenant record not found.');
+      }
+    }
+
+    if (tenant.isPhoneVerified) {
+      return error(res, 400, 'This tenant phone number is already verified.');
+    }
+
+    if (!tenant.phoneOtpHash || !tenant.phoneOtpExpiresAt) {
+      return error(
+        res,
+        400,
+        'No active OTP found. Please request a new OTP.'
+      );
+    }
+
+    if (tenant.phoneOtpExpiresAt.getTime() < Date.now()) {
+      return error(
+        res,
+        400,
+        'This OTP has expired. Please request a new one.'
+      );
+    }
+
+    if (tenant.phoneOtpAttempts >= MAX_OTP_ATTEMPTS) {
+      return error(
+        res,
+        429,
+        'Too many incorrect attempts. Please request a new OTP.'
+      );
+    }
+
+    const isMatch = await otpService.compareOtp(
+      otp,
+      tenant.phoneOtpHash
+    );
+
+    if (!isMatch) {
+      tenant.phoneOtpAttempts += 1;
+      await tenant.save();
+
+      return error(res, 400, 'Incorrect OTP. Please try again.');
+    }
+
+    tenant.isPhoneVerified = true;
+    tenant.phoneOtpHash = undefined;
+    tenant.phoneOtpExpiresAt = undefined;
+    tenant.phoneOtpAttempts = 0;
+
+    await tenant.save();
+
+    return success(
+      res,
+      200,
+      'Tenant phone number verified successfully.',
+      {
+        tenantId: tenant._id,
+        isPhoneVerified: true,
+      }
+    );
+  } catch (err) {
+    next(err);
+  }
+}
+
+module.exports = {
+  createTenant,
+  getTenants,
+  getTenantById,
+  resubmitTenant,
+  sendTenantPhoneOtp,
+  verifyTenantPhoneOtp,
+};
